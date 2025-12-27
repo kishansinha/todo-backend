@@ -1,6 +1,5 @@
 const { MongoClient } = require('mongodb');
 
-// MongoDB connection
 const uri = process.env.MONGODB_URI;
 
 if (!uri) {
@@ -14,20 +13,25 @@ async function connectToDatabase() {
   if (cachedDb) {
     return cachedDb;
   }
-
   await client.connect();
   const db = client.db('todoapp');
   cachedDb = db;
   return db;
 }
 
-module.exports = async (req, res) => {
-  // Enable CORS
+// Helper function to set CORS headers
+function setCorsHeaders(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Max-Age', '86400');
+}
 
-  // Handle preflight requests
+module.exports = async (req, res) => {
+  // Set CORS headers for all requests
+  setCorsHeaders(res);
+
+  // Handle preflight OPTIONS request
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return;
@@ -37,7 +41,19 @@ module.exports = async (req, res) => {
     const db = await connectToDatabase();
     const users = db.collection('users');
 
-    const { method, query, body } = req;
+    // Parse request body for POST/PUT requests
+    let body = req.body;
+    if (req.method === 'POST' || req.method === 'PUT') {
+      if (typeof body === 'string') {
+        try {
+          body = JSON.parse(body);
+        } catch (e) {
+          // Body is already an object
+        }
+      }
+    }
+
+    const { method, query } = req;
     const username = query.username || body?.username;
 
     // GET - Retrieve user data
@@ -60,60 +76,67 @@ module.exports = async (req, res) => {
       });
     }
 
-    // POST - Create new user
-    if (method === 'POST' && req.url.includes('/signup')) {
-      const { username, name, password } = body;
+    // POST - Signup or Login
+    if (method === 'POST') {
+      // Determine if it's signup or login based on URL
+      const isSignup = req.url.includes('/signup');
+      const isLogin = req.url.includes('/login');
 
-      if (!username || !name || !password) {
-        return res.status(400).json({ error: 'Username, name, and password are required' });
+      if (isSignup) {
+        const { username, name, password } = body;
+
+        if (!username || !name || !password) {
+          return res.status(400).json({ error: 'Username, name, and password are required' });
+        }
+
+        // Check if user already exists
+        const existingUser = await users.findOne({ username });
+        if (existingUser) {
+          return res.status(409).json({ error: 'Username already exists' });
+        }
+
+        // Create new user
+        await users.insertOne({
+          username,
+          name,
+          password,
+          tasks: {},
+          timezone: 'auto',
+          createdAt: new Date()
+        });
+
+        return res.status(201).json({
+          success: true,
+          username,
+          name,
+          tasks: {},
+          timezone: 'auto'
+        });
       }
 
-      // Check if user already exists
-      const existingUser = await users.findOne({ username });
-      if (existingUser) {
-        return res.status(409).json({ error: 'Username already exists' });
+      if (isLogin) {
+        const { username, password } = body;
+
+        if (!username || !password) {
+          return res.status(400).json({ error: 'Username and password are required' });
+        }
+
+        const user = await users.findOne({ username, password });
+
+        if (!user) {
+          return res.status(401).json({ error: 'Invalid credentials' });
+        }
+
+        return res.status(200).json({
+          success: true,
+          username: user.username,
+          name: user.name,
+          tasks: user.tasks || {},
+          timezone: user.timezone || 'auto'
+        });
       }
 
-      // Create new user
-      await users.insertOne({
-        username,
-        name,
-        password, // In production, hash this!
-        tasks: {},
-        timezone: 'auto',
-        createdAt: new Date()
-      });
-
-      return res.status(201).json({
-        success: true,
-        username,
-        name,
-        tasks: {},
-        timezone: 'auto'
-      });
-    }
-
-    // POST - Login (verify credentials)
-    if (method === 'POST' && req.url.includes('/login')) {
-      const { username, password } = body;
-
-      if (!username || !password) {
-        return res.status(400).json({ error: 'Username and password are required' });
-      }
-
-      const user = await users.findOne({ username, password });
-
-      if (!user) {
-        return res.status(401).json({ error: 'Invalid credentials' });
-      }
-
-      return res.status(200).json({
-        success: true,
-        username: user.username,
-        name: user.name,
-        tasks: user.tasks || {},
-        timezone: user.timezone || 'auto'
-      });
+      return res.status(400).json({ error: 'Invalid endpoint' });
     }
 
     // PUT - Update user tasks and settings
