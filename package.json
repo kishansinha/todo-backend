@@ -2,14 +2,7 @@
   "name": "todo-backend",
   "version": "1.0.0",
   "description": "Backend API for Todo App with MongoDB",
-  "main": "api/tasks.js",
-  "scripts": {
-    "start": "node api/tasks.js"
-  },
   "dependencies": {
     "mongodb": "^6.3.0"
-  },
-  "engines": {
-    "node": ">=18.x"
   }
 }
